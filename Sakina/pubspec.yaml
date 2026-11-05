@@ -1,0 +1,45 @@
+name: sakina
+description: SAKINA - تطبيق إسلامي متكامل (مواقيت، أذان، قرآن، أذكار، ختمة).
+publish_to: 'none'
+version: 3.0.0+3
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  # المواقيت (حساب محلي بدون إنترنت) والتاريخ الهجري
+  adhan: ^2.0.0
+  hijri: ^3.0.0
+  # التنبيهات والأذان
+  flutter_local_notifications: ^18.0.1
+  timezone: ^0.10.0
+  android_intent_plus: ^5.2.1
+  # الصوت (القرآن + تجربة الأذان) مع التشغيل في الخلفية
+  just_audio: ^0.9.40
+  just_audio_background: ^0.0.1-beta.13
+  # التخزين والملفات والمشاركة
+  shared_preferences: ^2.3.2
+  path_provider: ^2.1.4
+  http: ^1.2.2
+  share_plus: ^10.1.4
+  file_picker: ^8.1.6
+  # البوصلة والويدجت والخطوط
+  flutter_compass: ^0.8.1
+  home_widget: ^0.7.0
+  google_fonts: ^6.2.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/adhan/
+    - assets/google_fonts/
