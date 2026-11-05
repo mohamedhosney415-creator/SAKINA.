@@ -1,133 +1,108 @@
 
-name: SAKINA Android APK
+name: Build SAKINA APK
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - main
-
-permissions:
-  contents: read
+    branches: [main, master]
+  workflow_dispatch:
 
 jobs:
   build:
-    name: Build SAKINA APK
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
-      # 1. Download repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Install Java
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
-      # 3. Install Flutter
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      # 4. Check environment
-      - name: Check environment
+      - name: Show versions
         run: |
           flutter --version
           java -version
-          python3 --version
 
-      # 5. Generate Android project
-      - name: Generate Android platform
+      - name: Generate Android project
         run: |
           flutter create \
             --org com.hosny \
             --project-name sakina \
             --platforms=android .
 
-      # 6. Prepare project
-      - name: Prepare project
-        run: |
-          rm -rf test
+      - name: Remove default test
+        run: rm -rf test
 
-      # 7. Apply SAKINA Android configuration
-      - name: Patch Android project
+      # Important: plugin metadata and plugin folders are needed
+      # by tool/patch_android.py, so pub get must run first.
+      - name: Get Flutter packages
+        run: flutter pub get
+
+      - name: Patch Android project and plugin compileSdk
         run: |
           python3 tool/patch_android.py
 
-      # 8. Install dependencies
-      - name: Get Flutter dependencies
+      - name: Verify Android SDK configuration
         run: |
-          flutter pub get
+          echo "Checking app compileSdk..."
+          grep -nE 'compileSdk(Version)?' android/app/build.gradle* || true
 
-      # 9. Analyze Flutter project
+          echo "Checking plugin compileSdk declarations..."
+          grep -R -nE 'compileSdk(Version)?' \
+            "$HOME/.pub-cache/hosted/pub.dev/file_picker-"*/android \
+            "$HOME/.pub-cache/hosted/pub.dev/flutter_plugin_android_lifecycle-"*/android \
+            2>/dev/null || true
+
       - name: Analyze Flutter project
-        run: |
-          flutter analyze --no-pub || true
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings || true
 
-      # 10. Check Android Gradle configuration
-      - name: Check Android Gradle files
-        run: |
-          echo "===== ROOT GRADLE ====="
-          cat android/build.gradle.kts || cat android/build.gradle || true
-
-          echo "===== APP GRADLE ====="
-          cat android/app/build.gradle.kts || cat android/app/build.gradle || true
-
-          echo "===== ANDROID PROJECT FILES ====="
-          find android -maxdepth 3 -type f -name "*.gradle*" -print
-
-      # 11. Build APK and save complete log
-      - name: Build APK with diagnostics
+      - name: Build release APK with diagnostics
+        id: build_apk
         shell: bash
         run: |
           set +e
 
           flutter build apk --release --verbose > build.log 2>&1
-
-          BUILD_EXIT=$?
-
-          echo ""
-          echo "================================"
-          echo "SAKINA BUILD ERROR SUMMARY"
-          echo "================================"
-
-          grep -niE \
-            "FAILURE:|What went wrong|Caused by:|Exception|Error:|failed|Could not|Unable to" \
-            build.log | tail -n 100 || true
+          BUILD_EXIT_CODE=$?
 
           echo ""
-          echo "================================"
-          echo "LAST 150 BUILD LOG LINES"
-          echo "================================"
+          echo "========== BUILD SUMMARY =========="
+
+          grep -n -E \
+            "BUILD SUCCESSFUL|BUILD FAILED|What went wrong|Execution failed|Error:" \
+            build.log | tail -n 80 || true
+
+          echo ""
+          echo "========== LAST 150 LOG LINES =========="
 
           tail -n 150 build.log
 
           echo ""
-          echo "Build exit code: $BUILD_EXIT"
+          echo "Build exit code: $BUILD_EXIT_CODE"
 
-          exit "$BUILD_EXIT"
+          exit $BUILD_EXIT_CODE
 
-      # 12. Upload diagnostic log even if build fails
       - name: Upload diagnostic log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SAKINA-build-diagnostics
+          name: SAKINA-build-log
           path: build.log
           if-no-files-found: ignore
-          retention-days: 7
 
-      # 13. Upload APK if build succeeds
-      - name: Upload SAKINA APK
+      - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: SAKINA-apk
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
-          retention-days: 14
