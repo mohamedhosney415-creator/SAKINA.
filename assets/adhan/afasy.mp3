@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ar">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="csrf-token" content="ScavVTSk4fLXLVnBhnmNIE2faKlCy8XnLxVmwS4M">
+
+        <title>شبكة الكعبة</title>
+
+        <!-- Fonts -->
+        <link href="https://fonts.googleapis.com/css?family=Nunito:400,600,700" rel="stylesheet">
+
+        <!-- Styles -->
+        <link rel="stylesheet" href="https://alkabbah.com/css/app.css">
+
+        <!-- Scripts -->
+        <script type="text/javascript" src="/js/manifest.js?id=db77ac894ed764f82c259879b313dac7"></script>
+        <script type="text/javascript" src="/js/vendor.js?id=cf2100b1a836e10b60e2ba8c9ca5bcf3"></script>
+        <script type="text/javascript" src="/js/app.js?id=adcbd10ddd1dd2008afe138895fe8714"></script>
+    </head>
+    <body class="bg-light font-sans antialiased">
+        <div class="container">
+    <div class="row justify-content-center my-5">
+        <div class="col-sm-12 col-md-8 col-lg-5 my-4">
+            <div>
+                <a class="d-flex justify-content-center mb-4" href="/">
+    <img src="https://alkabbah.com/images/logo.png">
+</a>
+            </div>
+
+            <div class="card shadow-sm px-1 mx-4">
+                <div class="card-body">
+
+            
+            
+            
+            <form method="POST" action="https://alkabbah.com/login">
+                <input type="hidden" name="_token" value="ScavVTSk4fLXLVnBhnmNIE2faKlCy8XnLxVmwS4M" autocomplete="off">                <div class="form-group">
+                    <label >
+    البريد الإلكتروني
+</label>
+
+                    <input  class="form-control" type="email" name="email" required="required">
+                                    </div>
+
+                <div class="form-group">
+                    <label >
+    كلمة المرور
+</label>
+
+                    <input  class="form-control" type="password" name="password" required="required" autocomplete="current-password">
+                                    </div>
+
+                <div class="form-group">
+                    <div class="custom-control custom-checkbox">
+                        <input type="checkbox" class="custom-control-input" id="remember_me" name="remember">
+                        <label class="custom-control-label" for="remember_me">
+                            تذكرني
+                        </label>
+                    </div>
+                </div>
+
+                <div class="mb-0">
+                    <div class="d-flex justify-content-end align-items-baseline">
+                                                    <a class="text-muted mr-3" href="https://alkabbah.com/forgot-password">
+                                نسيت كلمة المرور الخاصة بك ؟ 
+                            </a>
+                        
+                        <button type="submit" class="btn btn-dark text-uppercase">
+    تسجيل الدخول
+</button>
+                    </div>
+                </div>
+
+                                    <div class="mt-3 text-center">
+                        <span class="text-muted">ليس لديك حساب؟</span>
+                        <a href="https://alkabbah.com/register">تسجيل</a>
+                    </div>
+                            </form>
+        </div>
+            </div>
+        </div>
+    </div>
+</div>
+    <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/vce701823e78c4301a35b7e07294d87301792088814092" integrity="sha512-UKNk8GbxkABxKcXYuLkO16EleLGUkcvJWtpSNmExE0Too3ZaFAxTscNWEc1OdAv5/BikHawapSCaiD2XCmp+Bw==" data-cf-beacon='{"version":"2024.11.0","token":"ed02f6e5381d48199144681764ec9ec9","r":1,"spa":2}' crossorigin="anonymous"></script>
+</body>
+</html>
