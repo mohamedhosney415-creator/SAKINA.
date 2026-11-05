@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+
 import 'core/settings.dart';
 import 'core/store.dart';
 import 'core/theme.dart';
@@ -12,30 +13,68 @@ import 'services/notification_service.dart';
 
 class SakinaApp extends StatefulWidget {
   const SakinaApp({super.key});
+
   @override
   State<SakinaApp> createState() => _SakinaAppState();
 }
 
-class _SakinaAppState extends State<SakinaApp> with WidgetsBindingObserver {
+class _SakinaAppState extends State<SakinaApp>
+    with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+
     WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _startup());
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _startupSafe();
+    });
   }
 
-  Future<void> _startup() async {
-    if (!Store.flag('permAsked')) {
-      await NotificationService.requestPermissions();
-      await Store.setFlag('permAsked', true);
+  Future<void> _startupSafe() async {
+    try {
+      final alreadyAsked = Store.flag('permAsked');
+
+      if (!alreadyAsked) {
+        try {
+          await NotificationService.requestPermissions();
+        } catch (e, stack) {
+          debugPrint('SAKINA: requestPermissions FAILED: $e');
+          debugPrint('$stack');
+        }
+
+        try {
+          await Store.setFlag('permAsked', true);
+        } catch (e, stack) {
+          debugPrint('SAKINA: setFlag FAILED: $e');
+          debugPrint('$stack');
+        }
+      }
+
+      try {
+        await NotificationService.ensureScheduled();
+      } catch (e, stack) {
+        debugPrint('SAKINA: ensureScheduled FAILED: $e');
+        debugPrint('$stack');
+      }
+    } catch (e, stack) {
+      debugPrint('SAKINA: STARTUP FAILED: $e');
+      debugPrint('$stack');
     }
-    await NotificationService.ensureScheduled();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      NotificationService.ensureScheduled();
+      try {
+        NotificationService.ensureScheduled().catchError((error, stack) {
+          debugPrint('SAKINA: resume scheduling FAILED: $error');
+          debugPrint('$stack');
+        });
+      } catch (e, stack) {
+        debugPrint('SAKINA: resume scheduling ERROR: $e');
+        debugPrint('$stack');
+      }
     }
   }
 
@@ -51,29 +90,56 @@ class _SakinaAppState extends State<SakinaApp> with WidgetsBindingObserver {
       listenable: Settings.i,
       builder: (context, _) {
         final s = Settings.i;
+
+        final themeIndex = s.themeMode.clamp(0, 2);
+
         return MaterialApp(
           title: 'سكينة',
           debugShowCheckedModeBanner: false,
+
           locale: const Locale('ar', 'EG'),
-          supportedLocales: const [Locale('ar', 'EG'), Locale('ar')],
+
+          supportedLocales: const [
+            Locale('ar', 'EG'),
+            Locale('ar'),
+          ],
+
           localizationsDelegates: const [
             GlobalMaterialLocalizations.delegate,
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
+
           themeMode: const [
-            ThemeMode.system, ThemeMode.light, ThemeMode.dark
-          ][s.themeMode.clamp(0, 2)],
-          theme: buildTheme(Brightness.light, s.accent, s.font),
-          darkTheme: buildTheme(Brightness.dark, s.accent, s.font),
-          builder: (context, child) => Directionality(
-            textDirection: TextDirection.rtl,
-            child: MediaQuery(
-              data: MediaQuery.of(context)
-                  .copyWith(textScaler: TextScaler.linear(s.fontScale)),
-              child: child ?? const SizedBox.shrink(),
-            ),
+            ThemeMode.system,
+            ThemeMode.light,
+            ThemeMode.dark,
+          ][themeIndex],
+
+          theme: buildTheme(
+            Brightness.light,
+            s.accent,
+            s.font,
           ),
+
+          darkTheme: buildTheme(
+            Brightness.dark,
+            s.accent,
+            s.font,
+          ),
+
+          builder: (context, child) {
+            return Directionality(
+              textDirection: TextDirection.rtl,
+              child: MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  textScaler: TextScaler.linear(s.fontScale),
+                ),
+                child: child ?? const SizedBox.shrink(),
+              ),
+            );
+          },
+
           home: const Shell(),
         );
       },
@@ -83,6 +149,7 @@ class _SakinaAppState extends State<SakinaApp> with WidgetsBindingObserver {
 
 class Shell extends StatefulWidget {
   const Shell({super.key});
+
   @override
   State<Shell> createState() => _ShellState();
 }
@@ -99,32 +166,56 @@ class _ShellState extends State<Shell> {
       AzkarPage(),
       MorePage(),
     ];
+
     return Scaffold(
-      body: SafeArea(child: IndexedStack(index: index, children: pages)),
+      body: SafeArea(
+        child: IndexedStack(
+          index: index,
+          children: pages,
+        ),
+      ),
+
       bottomNavigationBar: NavigationBar(
         selectedIndex: index,
-        onDestinationSelected: (i) => setState(() => index = i),
+
+        onDestinationSelected: (i) {
+          if (!mounted) return;
+
+          setState(() {
+            index = i;
+          });
+        },
+
         destinations: const [
           NavigationDestination(
-              icon: Icon(Icons.home_outlined),
-              selectedIcon: Icon(Icons.home_rounded),
-              label: 'الرئيسية'),
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home_rounded),
+            label: 'الرئيسية',
+          ),
+
           NavigationDestination(
-              icon: Icon(Icons.access_time),
-              selectedIcon: Icon(Icons.access_time_filled),
-              label: 'الصلاة'),
+            icon: Icon(Icons.access_time),
+            selectedIcon: Icon(Icons.access_time_filled),
+            label: 'الصلاة',
+          ),
+
           NavigationDestination(
-              icon: Icon(Icons.menu_book_outlined),
-              selectedIcon: Icon(Icons.menu_book_rounded),
-              label: 'القرآن'),
+            icon: Icon(Icons.menu_book_outlined),
+            selectedIcon: Icon(Icons.menu_book_rounded),
+            label: 'القرآن',
+          ),
+
           NavigationDestination(
-              icon: Icon(Icons.auto_awesome_outlined),
-              selectedIcon: Icon(Icons.auto_awesome),
-              label: 'الأذكار'),
+            icon: Icon(Icons.auto_awesome_outlined),
+            selectedIcon: Icon(Icons.auto_awesome),
+            label: 'الأذكار',
+          ),
+
           NavigationDestination(
-              icon: Icon(Icons.grid_view_outlined),
-              selectedIcon: Icon(Icons.grid_view_rounded),
-              label: 'المزيد'),
+            icon: Icon(Icons.grid_view_outlined),
+            selectedIcon: Icon(Icons.grid_view_rounded),
+            label: 'المزيد',
+          ),
         ],
       ),
     );
