@@ -34,7 +34,7 @@ jobs:
           channel: stable
           cache: true
 
-      # 4. Show versions
+      # 4. Check environment
       - name: Check environment
         run: |
           flutter --version
@@ -49,7 +49,7 @@ jobs:
             --project-name sakina \
             --platforms=android .
 
-      # 6. Remove default test folder
+      # 6. Prepare project
       - name: Prepare project
         run: |
           rm -rf test
@@ -64,30 +64,70 @@ jobs:
         run: |
           flutter pub get
 
-      # 9. Analyze project
+      # 9. Analyze Flutter project
       - name: Analyze Flutter project
         run: |
           flutter analyze --no-pub || true
 
-      # 10. Display Android Gradle configuration
+      # 10. Check Android Gradle configuration
       - name: Check Android Gradle files
         run: |
           echo "===== ROOT GRADLE ====="
-          cat android/build.gradle.kts || true
+          cat android/build.gradle.kts || cat android/build.gradle || true
+
           echo "===== APP GRADLE ====="
-          cat android/app/build.gradle.kts || true
-          echo "===== ANDROID PROJECTS ====="
-          find android -maxdepth 2 -type f -name "*.gradle*" -print
+          cat android/app/build.gradle.kts || cat android/app/build.gradle || true
 
-      # 11. Build APK with verbose diagnostics
-      - name: Build APK with detailed logs
+          echo "===== ANDROID PROJECT FILES ====="
+          find android -maxdepth 3 -type f -name "*.gradle*" -print
+
+      # 11. Build APK and save complete log
+      - name: Build APK with diagnostics
+        shell: bash
         run: |
-          flutter build apk --release --verbose
+          set +e
 
-      # 12. Upload APK
+          flutter build apk --release --verbose > build.log 2>&1
+
+          BUILD_EXIT=$?
+
+          echo ""
+          echo "================================"
+          echo "SAKINA BUILD ERROR SUMMARY"
+          echo "================================"
+
+          grep -niE \
+            "FAILURE:|What went wrong|Caused by:|Exception|Error:|failed|Could not|Unable to" \
+            build.log | tail -n 100 || true
+
+          echo ""
+          echo "================================"
+          echo "LAST 150 BUILD LOG LINES"
+          echo "================================"
+
+          tail -n 150 build.log
+
+          echo ""
+          echo "Build exit code: $BUILD_EXIT"
+
+          exit "$BUILD_EXIT"
+
+      # 12. Upload diagnostic log even if build fails
+      - name: Upload diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SAKINA-build-diagnostics
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # 13. Upload APK if build succeeds
       - name: Upload SAKINA APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: SAKINA-apk
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
+          retention-days: 14
