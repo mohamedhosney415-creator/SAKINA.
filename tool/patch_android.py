@@ -2,6 +2,7 @@
 #!/usr/bin/env python3
 
 import glob
+import json
 import os
 import re
 import shutil
@@ -14,7 +15,6 @@ MAIN = os.path.join(APP, "src", "main")
 
 MANIFEST_MARK = "SAKINA_PATCHED"
 ROOT_GRADLE_MARK = "SAKINA_COMPILE_SDK_36"
-DESUGARING_MARK = "SAKINA_DESUGARING"
 
 
 def fail(message):
@@ -23,13 +23,13 @@ def fail(message):
 
 
 def read(path):
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
+    with open(path, "r", encoding="utf-8") as file:
+        return file.read()
 
 
 def write(path, content):
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(content)
+    with open(path, "w", encoding="utf-8", newline="\n") as file:
+        file.write(content)
 
 
 def find_one(paths):
@@ -39,19 +39,161 @@ def find_one(paths):
     return None
 
 
+def set_compile_sdk(content, is_kts, description):
+    """
+    Replace an existing compileSdk declaration without changing
+    minSdk or targetSdk.
+    Supports common Groovy and Kotlin Gradle syntax.
+    """
+    lines = content.splitlines()
+    changed = False
+
+    pattern = re.compile(
+        r"^(\s*)(compileSdkVersion|compileSdk)"
+        r"\s*(?:=\s*)?(?:\([^()\r\n]*\)|[^;\r\n]+?)"
+        r"\s*(;?\s*(?://.*)?)$"
+    )
+
+    for index, line in enumerate(lines):
+        match = pattern.match(line)
+        if not match:
+            continue
+
+        indent, name, ending = match.groups()
+
+        if is_kts:
+            lines[index] = f"{indent}{name} = 36{ending}"
+        else:
+            lines[index] = f"{indent}{name} 36{ending}"
+
+        changed = True
+        break
+
+    if not changed:
+        return content, False
+
+    return "\n".join(lines) + ("\n" if content.endswith("\n") else ""), True
+
+
+def patch_plugin_compile_sdk(plugin_path, plugin_name):
+    android_dir = os.path.join(plugin_path, "android")
+
+    if not os.path.isdir(android_dir):
+        return False
+
+    gradle_files = [
+        os.path.join(android_dir, "build.gradle.kts"),
+        os.path.join(android_dir, "build.gradle"),
+    ]
+
+    gradle_file = find_one(gradle_files)
+
+    if not gradle_file:
+        return False
+
+    content = read(gradle_file)
+    is_kts = gradle_file.endswith(".kts")
+
+    updated, changed = set_compile_sdk(
+        content,
+        is_kts,
+        f"plugin {plugin_name}"
+    )
+
+    if changed:
+        write(gradle_file, updated)
+        print(f"OK: {plugin_name} compileSdk set to 36")
+        return True
+
+    # Some plugins use a variable or omit compileSdk.
+    # Insert the override at the beginning of their android block.
+    android_block = re.search(r"(?m)^(\s*)android\s*\{", content)
+
+    if android_block:
+        insertion = (
+            f"{android_block.group(1)}android {{\n"
+            f"{android_block.group(1)}    "
+            f"{'compileSdk = 36' if is_kts else 'compileSdk 36'}"
+        )
+
+        updated = (
+            content[:android_block.start()]
+            + insertion
+            + content[android_block.end():]
+        )
+
+        write(gradle_file, updated)
+        print(f"OK: {plugin_name} compileSdk override inserted")
+        return True
+
+    print(f"WARNING: No Android Gradle block found for {plugin_name}")
+    return False
+
+
+def patch_all_android_plugins():
+    plugins_file = os.path.join(ROOT, ".flutter-plugins-dependencies")
+
+    if not os.path.isfile(plugins_file):
+        fail(
+            ".flutter-plugins-dependencies not found. "
+            "Run flutter pub get before this script."
+        )
+
+    try:
+        data = json.loads(read(plugins_file))
+    except Exception as error:
+        fail(f"Could not read Flutter plugin metadata: {error}")
+
+    android_plugins = data.get("plugins", {}).get("android", [])
+
+    if not android_plugins:
+        fail("No Android plugins were found in Flutter plugin metadata.")
+
+    patched_names = []
+
+    for plugin in android_plugins:
+        name = plugin.get("name", "unknown")
+        plugin_path = plugin.get("path", "")
+
+        if not plugin_path:
+            print(f"WARNING: Missing path for plugin {name}")
+            continue
+
+        if not os.path.isabs(plugin_path):
+            plugin_path = os.path.abspath(
+                os.path.join(ROOT, plugin_path)
+            )
+
+        if not os.path.isdir(plugin_path):
+            print(f"WARNING: Plugin directory not found: {name}")
+            continue
+
+        if patch_plugin_compile_sdk(plugin_path, name):
+            patched_names.append(name)
+
+    if "file_picker" not in patched_names:
+        fail(
+            "Could not patch file_picker compileSdk. "
+            "Check the Flutter plugin metadata and file_picker Gradle file."
+        )
+
+    print(
+        "OK: Android plugin compileSdk patching completed. "
+        f"Patched {len(patched_names)} plugin(s)."
+    )
+
+
 # =========================================================
-# 0. Verify Android project
+# 0. Verify generated Android project and native resources
 # =========================================================
 
 if not os.path.isdir(MAIN):
     fail("Android project not found. Run flutter create first.")
 
 native_dir = os.path.join(ROOT, "android_native")
-
 widget_source = os.path.join(
     native_dir, "kotlin", "SakinaWidgetProvider.kt"
 )
-
 native_res = os.path.join(native_dir, "res")
 
 if not os.path.isfile(widget_source):
@@ -82,10 +224,13 @@ if not root_gradle:
 # =========================================================
 
 manifest = os.path.join(MAIN, "AndroidManifest.xml")
+
+if not os.path.isfile(manifest):
+    fail("AndroidManifest.xml not found.")
+
 content = read(manifest)
 
 if MANIFEST_MARK not in content:
-
     permissions = [
         "INTERNET",
         "POST_NOTIFICATIONS",
@@ -97,14 +242,13 @@ if MANIFEST_MARK not in content:
         "FOREGROUND_SERVICE_MEDIA_PLAYBACK",
     ]
 
-    permission_xml = (
-        "    <!-- " + MANIFEST_MARK + " -->\n"
-    )
+    permission_xml = f"    <!-- {MANIFEST_MARK} -->\n"
 
     for permission in permissions:
         permission_xml += (
             '    <uses-permission android:name="android.permission.'
-            + permission + '"/>\n'
+            + permission
+            + '"/>\n'
         )
 
     if "<application" not in content:
@@ -179,11 +323,9 @@ if MANIFEST_MARK not in content:
     )
 
     write(manifest, content)
-
-    print("OK: Manifest configured.")
-
+    print("OK: Android Manifest configured.")
 else:
-    print("OK: Manifest already configured.")
+    print("OK: Android Manifest already configured.")
 
 
 # =========================================================
@@ -213,13 +355,12 @@ if not package_match:
 package_name = package_match.group(1)
 
 main_activity_content = (
-    "package " + package_name + "\n\n"
+    f"package {package_name}\n\n"
     "import com.ryanheise.audioservice.AudioServiceActivity\n\n"
     "class MainActivity : AudioServiceActivity()\n"
 )
 
 write(main_activity, main_activity_content)
-
 print("OK: MainActivity configured.")
 
 
@@ -228,7 +369,6 @@ print("OK: MainActivity configured.")
 # =========================================================
 
 provider_content = read(widget_source)
-
 provider_content = provider_content.replace(
     "{{PKG}}",
     package_name
@@ -240,7 +380,6 @@ provider_destination = os.path.join(
 )
 
 write(provider_destination, provider_content)
-
 print("OK: Widget provider copied.")
 
 
@@ -249,29 +388,17 @@ print("OK: Widget provider copied.")
 # =========================================================
 
 destination_res = os.path.join(MAIN, "res")
-
 os.makedirs(destination_res, exist_ok=True)
 
 for directory, _, filenames in os.walk(native_res):
-
     relative = os.path.relpath(directory, native_res)
-
-    output_directory = os.path.join(
-        destination_res,
-        relative
-    )
+    output_directory = os.path.join(destination_res, relative)
 
     os.makedirs(output_directory, exist_ok=True)
 
     for filename in filenames:
-
         source = os.path.join(directory, filename)
-
-        destination = os.path.join(
-            output_directory,
-            filename
-        )
-
+        destination = os.path.join(output_directory, filename)
         shutil.copy2(source, destination)
 
 print("OK: Widget resources copied.")
@@ -283,19 +410,13 @@ print("OK: Widget resources copied.")
 
 adhan_source = os.path.join(ROOT, "assets", "adhan")
 
-raw_directory = os.path.join(
-    destination_res,
-    "raw"
-)
-
+raw_directory = os.path.join(destination_res, "raw")
 copied_audio = []
 
 if os.path.isdir(adhan_source):
-
     os.makedirs(raw_directory, exist_ok=True)
 
     for filename in sorted(os.listdir(adhan_source)):
-
         base, extension = os.path.splitext(filename)
 
         if extension.lower() not in (".mp3", ".ogg", ".wav"):
@@ -321,67 +442,40 @@ print("OK: Adhan audio:", copied_audio or "No audio files found.")
 
 
 # =========================================================
-# 6. App compileSdk 36
+# 6. Set app compileSdk to 36
 # =========================================================
 
 is_kts = app_gradle.endswith(".kts")
-
 gradle_content = read(app_gradle)
 
-compile_pattern = re.compile(
-    r"(?m)^(\s*)compileSdk(?:Version)?\s*(?:=\s*)?[^;\n]+"
+gradle_content, app_sdk_changed = set_compile_sdk(
+    gradle_content,
+    is_kts,
+    "app"
 )
 
-if compile_pattern.search(gradle_content):
+if not app_sdk_changed:
+    fail("Could not find compileSdk declaration in app Gradle file.")
 
-    if is_kts:
-        replacement = r"\g<1>compileSdk = 36"
-    else:
-        replacement = r"\g<1>compileSdk 36"
-
-    gradle_content = compile_pattern.sub(
-        replacement,
-        gradle_content,
-        count=1
-    )
-
-else:
-    fail("Could not find compileSdk in app Gradle file.")
+print("OK: App compileSdk set to 36.")
 
 
 # =========================================================
-# 7. Core library desugaring
+# 7. Configure core library desugaring
 # =========================================================
 
 if (
     "isCoreLibraryDesugaringEnabled" not in gradle_content
     and "coreLibraryDesugaringEnabled" not in gradle_content
 ):
-
     if is_kts:
-
         gradle_content, count = re.subn(
             r"(compileOptions\s*\{)",
             r"\1\n        isCoreLibraryDesugaringEnabled = true",
             gradle_content,
             count=1
         )
-
-        if count == 0:
-            fail("compileOptions not found in app Gradle file.")
-
-        gradle_content += """
-
-// SAKINA_DESUGARING
-dependencies {
-    coreLibraryDesugaring(
-        "com.android.tools:desugar_jdk_libs:2.1.4"
-    )
-}
-"""
-
     else:
-
         gradle_content, count = re.subn(
             r"(compileOptions\s*\{)",
             r"\1\n        coreLibraryDesugaringEnabled true",
@@ -389,134 +483,58 @@ dependencies {
             count=1
         )
 
-        if count == 0:
-            fail("compileOptions not found in app Gradle file.")
+    if count == 0:
+        fail("compileOptions not found in app Gradle file.")
 
+if "com.android.tools:desugar_jdk_libs" not in gradle_content:
+    if is_kts:
         gradle_content += """
 
-// SAKINA_DESUGARING
+dependencies {
+    coreLibraryDesugaring(
+        "com.android.tools:desugar_jdk_libs:2.1.4"
+    )
+}
+"""
+    else:
+        gradle_content += """
+
 dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
 }
 """
 
 write(app_gradle, gradle_content)
-
-print("OK: App compileSdk set to 36.")
-print("OK: Desugaring configured.")
+print("OK: Core library desugaring configured.")
 
 
 # =========================================================
-# 8. Global compileSdk 36
-#    FIX: No Project.afterEvaluate()
+# 8. Remove the old late global compileSdk modification
 # =========================================================
 
 root_content = read(root_gradle)
 
-# Remove the previous SAKINA block, if present.
 if ROOT_GRADLE_MARK in root_content:
+    root_content = root_content.split(
+        f"// {ROOT_GRADLE_MARK}",
+        1
+    )[0].rstrip() + "\n"
 
-    root_content = re.sub(
-        r"\n// SAKINA_COMPILE_SDK_36.*",
-        "",
-        root_content,
-        flags=re.DOTALL
-    )
-
-
-if root_gradle.endswith(".kts"):
-
-    global_compile_sdk = """
-
-// SAKINA_COMPILE_SDK_36
-// Set compileSdk 36 after all Gradle projects are evaluated.
-// This avoids calling afterEvaluate on an already evaluated project.
-
-gradle.projectsEvaluated {
-    gradle.rootProject.subprojects.forEach { subproject ->
-
-        val androidExtension =
-            subproject.extensions.findByName("android")
-
-        if (androidExtension != null) {
-
-            val setter = androidExtension.javaClass.methods.firstOrNull {
-                it.name == "compileSdkVersion" &&
-                it.parameterCount == 1 &&
-                it.parameterTypes[0] == Int::class.javaPrimitiveType
-            }
-
-            if (setter != null) {
-
-                setter.invoke(androidExtension, 36)
-
-                println(
-                    "SAKINA: compileSdk 36 -> ${subproject.path}"
-                )
-
-            } else {
-
-                throw GradleException(
-                    "SAKINA: compileSdkVersion setter not found in " +
-                    subproject.path
-                )
-            }
-        }
-    }
-}
-"""
-
+    write(root_gradle, root_content)
+    print("OK: Removed old late compileSdk Gradle hook.")
 else:
-
-    global_compile_sdk = """
-
-// SAKINA_COMPILE_SDK_36
-// Set compileSdk 36 after all Gradle projects are evaluated.
-// This avoids calling afterEvaluate on an already evaluated project.
-
-gradle.projectsEvaluated {
-    gradle.rootProject.subprojects.each { subproject ->
-
-        def androidExtension =
-            subproject.extensions.findByName("android")
-
-        if (androidExtension != null) {
-
-            def setter = androidExtension.class.methods.find {
-                it.name == "compileSdkVersion" &&
-                it.parameterCount == 1 &&
-                it.parameterTypes[0] == Integer.TYPE
-            }
-
-            if (setter != null) {
-
-                setter.invoke(androidExtension, 36)
-
-                println(
-                    "SAKINA: compileSdk 36 -> ${subproject.path}"
-                )
-
-            } else {
-
-                throw new GradleException(
-                    "SAKINA: compileSdkVersion setter not found in " +
-                    subproject.path
-                )
-            }
-        }
-    }
-}
-"""
-
-root_content += global_compile_sdk
-
-write(root_gradle, root_content)
-
-print("OK: Global compileSdk 36 rule configured.")
+    print("OK: No old global compileSdk hook found.")
 
 
 # =========================================================
-# 9. Final verification
+# 9. Patch Android plugin Gradle files BEFORE Gradle build
+# =========================================================
+
+patch_all_android_plugins()
+
+
+# =========================================================
+# 10. Final verification
 # =========================================================
 
 print("")
@@ -524,11 +542,12 @@ print("==========================================")
 print("SAKINA ANDROID PATCH COMPLETED")
 print("==========================================")
 print("App compileSdk: 36")
-print("Android plugin modules: compileSdk 36")
+print("Android plugin compileSdk: patched before Gradle build")
 print("minSdk: unchanged")
 print("targetSdk: unchanged")
 print("Audio service: preserved")
 print("Notifications: preserved")
 print("Widget: preserved")
 print("Adhan resources: copied")
+print("No projectsEvaluated compileSdk modification")
 print("==========================================")
