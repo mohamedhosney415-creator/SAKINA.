@@ -1,8 +1,5 @@
 
 #!/usr/bin/env python3
-# SAKINA Android patch
-# Sets compileSdk 36 for the app AND all Android subprojects/plugins.
-# Preserves manifest, audio service, notifications, widget and adhan resources.
 
 import glob
 import os
@@ -26,13 +23,13 @@ def fail(message):
 
 
 def read(path):
-    with open(path, "r", encoding="utf-8") as file:
-        return file.read()
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
 
 
 def write(path, content):
-    with open(path, "w", encoding="utf-8", newline="\n") as file:
-        file.write(content)
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(content)
 
 
 def find_one(paths):
@@ -42,24 +39,26 @@ def find_one(paths):
     return None
 
 
-# ---------------------------------------------------------
-# 0) Verify generated Android project and SAKINA resources
-# ---------------------------------------------------------
+# =========================================================
+# 0. Verify Android project
+# =========================================================
 
 if not os.path.isdir(MAIN):
-    fail("مجلد android غير موجود. يجب تشغيل flutter create أولاً.")
+    fail("Android project not found. Run flutter create first.")
 
 native_dir = os.path.join(ROOT, "android_native")
+
 widget_source = os.path.join(
     native_dir, "kotlin", "SakinaWidgetProvider.kt"
 )
+
 native_res = os.path.join(native_dir, "res")
 
 if not os.path.isfile(widget_source):
-    fail("الملف android_native/kotlin/SakinaWidgetProvider.kt غير موجود.")
+    fail("Missing android_native/kotlin/SakinaWidgetProvider.kt")
 
 if not os.path.isdir(native_res):
-    fail("المجلد android_native/res غير موجود.")
+    fail("Missing android_native/res directory.")
 
 app_gradle = find_one([
     os.path.join(APP, "build.gradle.kts"),
@@ -67,25 +66,26 @@ app_gradle = find_one([
 ])
 
 root_gradle = find_one([
-    os.path.join(ANDROID, "build.gradle"),
     os.path.join(ANDROID, "build.gradle.kts"),
+    os.path.join(ANDROID, "build.gradle"),
 ])
 
 if not app_gradle:
-    fail("لم أجد build.gradle أو build.gradle.kts داخل android/app.")
+    fail("App Gradle file not found.")
 
 if not root_gradle:
-    fail("لم أجد ملف Gradle الرئيسي داخل android.")
+    fail("Root Gradle file not found.")
 
 
-# ---------------------------------------------------------
-# 1) AndroidManifest: permissions, audio, notifications, widget
-# ---------------------------------------------------------
+# =========================================================
+# 1. Android Manifest
+# =========================================================
 
 manifest = os.path.join(MAIN, "AndroidManifest.xml")
 content = read(manifest)
 
 if MANIFEST_MARK not in content:
+
     permissions = [
         "INTERNET",
         "POST_NOTIFICATIONS",
@@ -99,15 +99,16 @@ if MANIFEST_MARK not in content:
 
     permission_xml = (
         "    <!-- " + MANIFEST_MARK + " -->\n"
-        + "".join(
-            '    <uses-permission android:name="android.permission.'
-            + permission + '"/>\n'
-            for permission in permissions
-        )
     )
 
+    for permission in permissions:
+        permission_xml += (
+            '    <uses-permission android:name="android.permission.'
+            + permission + '"/>\n'
+        )
+
     if "<application" not in content:
-        fail("لم أجد application داخل AndroidManifest.xml.")
+        fail("AndroidManifest.xml has no application element.")
 
     content = content.replace(
         "<application",
@@ -169,7 +170,7 @@ if MANIFEST_MARK not in content:
 """
 
     if "</application>" not in content:
-        fail("لم أجد نهاية application داخل AndroidManifest.xml.")
+        fail("AndroidManifest.xml has no closing application element.")
 
     content = content.replace(
         "</application>",
@@ -178,14 +179,16 @@ if MANIFEST_MARK not in content:
     )
 
     write(manifest, content)
-    print("OK: AndroidManifest patched.")
+
+    print("OK: Manifest configured.")
+
 else:
-    print("OK: AndroidManifest already patched.")
+    print("OK: Manifest already configured.")
 
 
-# ---------------------------------------------------------
-# 2) MainActivity and widget provider
-# ---------------------------------------------------------
+# =========================================================
+# 2. MainActivity
+# =========================================================
 
 main_files = glob.glob(
     os.path.join(MAIN, "kotlin", "**", "MainActivity.kt"),
@@ -193,7 +196,7 @@ main_files = glob.glob(
 )
 
 if not main_files:
-    fail("MainActivity.kt غير موجود.")
+    fail("MainActivity.kt not found.")
 
 main_activity = main_files[0]
 main_content = read(main_activity)
@@ -205,18 +208,28 @@ package_match = re.search(
 )
 
 if not package_match:
-    fail("تعذر تحديد package داخل MainActivity.kt.")
+    fail("Could not detect MainActivity package.")
 
 package_name = package_match.group(1)
 
-write(
-    main_activity,
+main_activity_content = (
     "package " + package_name + "\n\n"
     "import com.ryanheise.audioservice.AudioServiceActivity\n\n"
     "class MainActivity : AudioServiceActivity()\n"
 )
 
-provider_content = read(widget_source).replace(
+write(main_activity, main_activity_content)
+
+print("OK: MainActivity configured.")
+
+
+# =========================================================
+# 3. Widget Provider
+# =========================================================
+
+provider_content = read(widget_source)
+
+provider_content = provider_content.replace(
     "{{PKG}}",
     package_name
 )
@@ -228,48 +241,68 @@ provider_destination = os.path.join(
 
 write(provider_destination, provider_content)
 
-print("OK: MainActivity and widget provider configured.")
+print("OK: Widget provider copied.")
 
 
-# ---------------------------------------------------------
-# 3) Copy widget resources
-# ---------------------------------------------------------
+# =========================================================
+# 4. Copy Android resources
+# =========================================================
 
 destination_res = os.path.join(MAIN, "res")
+
 os.makedirs(destination_res, exist_ok=True)
 
 for directory, _, filenames in os.walk(native_res):
+
     relative = os.path.relpath(directory, native_res)
-    output_directory = os.path.join(destination_res, relative)
+
+    output_directory = os.path.join(
+        destination_res,
+        relative
+    )
+
     os.makedirs(output_directory, exist_ok=True)
 
     for filename in filenames:
+
         source = os.path.join(directory, filename)
-        destination = os.path.join(output_directory, filename)
+
+        destination = os.path.join(
+            output_directory,
+            filename
+        )
+
         shutil.copy2(source, destination)
 
-print("OK: Android widget resources copied.")
+print("OK: Widget resources copied.")
 
 
-# ---------------------------------------------------------
-# 4) Copy adhan audio files into Android res/raw
-# ---------------------------------------------------------
+# =========================================================
+# 5. Copy Adhan audio files
+# =========================================================
 
 adhan_source = os.path.join(ROOT, "assets", "adhan")
-raw_directory = os.path.join(destination_res, "raw")
+
+raw_directory = os.path.join(
+    destination_res,
+    "raw"
+)
+
 copied_audio = []
 
 if os.path.isdir(adhan_source):
+
     os.makedirs(raw_directory, exist_ok=True)
 
     for filename in sorted(os.listdir(adhan_source)):
+
         base, extension = os.path.splitext(filename)
 
         if extension.lower() not in (".mp3", ".ogg", ".wav"):
             continue
 
         if not re.fullmatch(r"[a-z][a-z0-9_]*", base):
-            print("WARNING: Invalid Android audio filename:", filename)
+            print("WARNING: Invalid audio filename:", filename)
             continue
 
         destination = os.path.join(
@@ -284,41 +317,49 @@ if os.path.isdir(adhan_source):
 
         copied_audio.append(filename)
 
-print("OK: Adhan audio copied:", copied_audio or "No audio files found.")
+print("OK: Adhan audio:", copied_audio or "No audio files found.")
 
 
-# ---------------------------------------------------------
-# 5) Set app compileSdk to 36 and enable desugaring
-# ---------------------------------------------------------
+# =========================================================
+# 6. App compileSdk 36
+# =========================================================
 
 is_kts = app_gradle.endswith(".kts")
+
 gradle_content = read(app_gradle)
 
-# Update the app compileSdk without changing minSdk or targetSdk.
 compile_pattern = re.compile(
     r"(?m)^(\s*)compileSdk(?:Version)?\s*(?:=\s*)?[^;\n]+"
 )
 
 if compile_pattern.search(gradle_content):
-    replacement = (
-        r"\g<1>compileSdk = 36"
-        if is_kts
-        else r"\g<1>compileSdk 36"
-    )
+
+    if is_kts:
+        replacement = r"\g<1>compileSdk = 36"
+    else:
+        replacement = r"\g<1>compileSdk 36"
 
     gradle_content = compile_pattern.sub(
         replacement,
         gradle_content,
         count=1
     )
-else:
-    fail("تعذر العثور على compileSdk داخل ملف Gradle الخاص بالتطبيق.")
 
-# Enable core library desugaring.
-if "isCoreLibraryDesugaringEnabled" not in gradle_content and \
-        "coreLibraryDesugaringEnabled" not in gradle_content:
+else:
+    fail("Could not find compileSdk in app Gradle file.")
+
+
+# =========================================================
+# 7. Core library desugaring
+# =========================================================
+
+if (
+    "isCoreLibraryDesugaringEnabled" not in gradle_content
+    and "coreLibraryDesugaringEnabled" not in gradle_content
+):
 
     if is_kts:
+
         gradle_content, count = re.subn(
             r"(compileOptions\s*\{)",
             r"\1\n        isCoreLibraryDesugaringEnabled = true",
@@ -327,16 +368,20 @@ if "isCoreLibraryDesugaringEnabled" not in gradle_content and \
         )
 
         if count == 0:
-            fail("لم أجد compileOptions داخل build.gradle.kts.")
+            fail("compileOptions not found in app Gradle file.")
 
-        gradle_content += (
-            "\n\n// " + DESUGARING_MARK + "\n"
-            "dependencies {\n"
-            '    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n'
-            "}\n"
-        )
+        gradle_content += """
+
+// SAKINA_DESUGARING
+dependencies {
+    coreLibraryDesugaring(
+        "com.android.tools:desugar_jdk_libs:2.1.4"
+    )
+}
+"""
 
     else:
+
         gradle_content, count = re.subn(
             r"(compileOptions\s*\{)",
             r"\1\n        coreLibraryDesugaringEnabled true",
@@ -345,106 +390,145 @@ if "isCoreLibraryDesugaringEnabled" not in gradle_content and \
         )
 
         if count == 0:
-            fail("لم أجد compileOptions داخل build.gradle.")
+            fail("compileOptions not found in app Gradle file.")
 
-        gradle_content += (
-            "\n\n// " + DESUGARING_MARK + "\n"
-            "dependencies {\n"
-            "    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'\n"
-            "}\n"
-        )
+        gradle_content += """
+
+// SAKINA_DESUGARING
+dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
+}
+"""
 
 write(app_gradle, gradle_content)
 
 print("OK: App compileSdk set to 36.")
-print("OK: Core library desugaring configured.")
+print("OK: Desugaring configured.")
 
 
-# ---------------------------------------------------------
-# 6) IMPORTANT: Set compileSdk 36 for ALL Android plugins
-# ---------------------------------------------------------
+# =========================================================
+# 8. Global compileSdk 36
+#    FIX: No Project.afterEvaluate()
+# =========================================================
 
 root_content = read(root_gradle)
 
-if ROOT_GRADLE_MARK not in root_content:
+# Remove the previous SAKINA block, if present.
+if ROOT_GRADLE_MARK in root_content:
 
-    if root_gradle.endswith(".kts"):
-        global_compile_sdk = """
+    root_content = re.sub(
+        r"\n// SAKINA_COMPILE_SDK_36.*",
+        "",
+        root_content,
+        flags=re.DOTALL
+    )
+
+
+if root_gradle.endswith(".kts"):
+
+    global_compile_sdk = """
 
 // SAKINA_COMPILE_SDK_36
-// Apply API 36 to every Android app/library module,
-// including Flutter plugin modules such as file_picker.
-subprojects {
-    afterEvaluate {
-        val androidExtension = extensions.findByName("android")
+// Set compileSdk 36 after all Gradle projects are evaluated.
+// This avoids calling afterEvaluate on an already evaluated project.
+
+gradle.projectsEvaluated {
+    gradle.rootProject.subprojects.forEach { subproject ->
+
+        val androidExtension =
+            subproject.extensions.findByName("android")
 
         if (androidExtension != null) {
-            val compileSdkMethod = androidExtension.javaClass.methods.firstOrNull {
+
+            val setter = androidExtension.javaClass.methods.firstOrNull {
                 it.name == "compileSdkVersion" &&
                 it.parameterCount == 1 &&
                 it.parameterTypes[0] == Int::class.javaPrimitiveType
             }
 
-            if (compileSdkMethod != null) {
-                compileSdkMethod.invoke(androidExtension, 36)
-            } else {
-                val compileSdkSetter = androidExtension.javaClass.methods.firstOrNull {
-                    it.name == "setCompileSdk" && it.parameterCount == 1
-                }
+            if (setter != null) {
 
-                compileSdkSetter?.invoke(androidExtension, 36)
+                setter.invoke(androidExtension, 36)
+
+                println(
+                    "SAKINA: compileSdk 36 -> ${subproject.path}"
+                )
+
+            } else {
+
+                throw GradleException(
+                    "SAKINA: compileSdkVersion setter not found in " +
+                    subproject.path
+                )
             }
         }
     }
 }
 """
-    else:
-        global_compile_sdk = """
+
+else:
+
+    global_compile_sdk = """
 
 // SAKINA_COMPILE_SDK_36
-// Apply API 36 to every Android app/library module,
-// including Flutter plugin modules such as file_picker.
-subprojects {
-    afterEvaluate { subproject ->
-        def androidExtension = subproject.extensions.findByName("android")
+// Set compileSdk 36 after all Gradle projects are evaluated.
+// This avoids calling afterEvaluate on an already evaluated project.
+
+gradle.projectsEvaluated {
+    gradle.rootProject.subprojects.each { subproject ->
+
+        def androidExtension =
+            subproject.extensions.findByName("android")
 
         if (androidExtension != null) {
-            try {
-                androidExtension.compileSdkVersion(36)
-            } catch (Exception ignored) {
-                try {
-                    androidExtension.compileSdk = 36
-                } catch (Exception secondError) {
-                    throw new GradleException(
-                        "SAKINA: Could not set compileSdk 36 for " +
-                        subproject.path,
-                        secondError
-                    )
-                }
+
+            def setter = androidExtension.class.methods.find {
+                it.name == "compileSdkVersion" &&
+                it.parameterCount == 1 &&
+                it.parameterTypes[0] == Integer.TYPE
+            }
+
+            if (setter != null) {
+
+                setter.invoke(androidExtension, 36)
+
+                println(
+                    "SAKINA: compileSdk 36 -> ${subproject.path}"
+                )
+
+            } else {
+
+                throw new GradleException(
+                    "SAKINA: compileSdkVersion setter not found in " +
+                    subproject.path
+                )
             }
         }
     }
 }
 """
 
-    root_content += global_compile_sdk
-    write(root_gradle, root_content)
+root_content += global_compile_sdk
 
-    print("OK: Global compileSdk 36 rule added to Android subprojects.")
-else:
-    print("OK: Global compileSdk 36 rule already exists.")
+write(root_gradle, root_content)
+
+print("OK: Global compileSdk 36 rule configured.")
 
 
-# ---------------------------------------------------------
-# 7) Finish
-# ---------------------------------------------------------
+# =========================================================
+# 9. Final verification
+# =========================================================
 
 print("")
-print("========================================")
+print("==========================================")
 print("SAKINA ANDROID PATCH COMPLETED")
+print("==========================================")
 print("App compileSdk: 36")
 print("Android plugin modules: compileSdk 36")
 print("minSdk: unchanged")
 print("targetSdk: unchanged")
-print("Audio, notifications and widget: preserved")
-print("========================================")
+print("Audio service: preserved")
+print("Notifications: preserved")
+print("Widget: preserved")
+print("Adhan resources: copied")
+print("==========================================")
