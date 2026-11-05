@@ -1,3 +1,4 @@
+
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
@@ -44,8 +45,12 @@ class AdhanAudio {
     final res = <Muezzin>[];
     for (final e in byName.entries) {
       if (e.key.endsWith('_fajr')) continue;
-      res.add(Muezzin(e.key, labels[e.key] ?? e.key, e.value,
-          byName['${e.key}_fajr']));
+      res.add(Muezzin(
+        e.key,
+        labels[e.key] ?? e.key,
+        e.value,
+        byName['${e.key}_fajr'],
+      ));
     }
     res.sort((a, b) =>
         a.id == 'afasy' ? -1 : (b.id == 'afasy' ? 1 : a.id.compareTo(b.id)));
@@ -69,8 +74,9 @@ class NotificationService {
       tz.setLocalLocation(tz.getLocation('Africa/Cairo'));
     } catch (_) {}
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-    await notificationsPlugin
-        .initialize(const InitializationSettings(android: android));
+    await notificationsPlugin.initialize(
+      const InitializationSettings(android: android),
+    );
   }
 
   static AndroidFlutterLocalNotificationsPlugin? get _android =>
@@ -104,7 +110,9 @@ class NotificationService {
       Prayer p, Muezzin? m, String body) {
     final vib = Settings.i.vibrate;
     String? raw;
-    if (m != null) raw = (p == Prayer.fajr && m.hasFajr) ? '${m.id}_fajr' : m.id;
+    if (m != null) {
+      raw = (p == Prayer.fajr && m.hasFajr) ? '${m.id}_fajr' : m.id;
+    }
     final channel = 'adhan_${raw ?? 'default'}_${vib ? 'v' : 'n'}';
     return NotificationDetails(
       android: AndroidNotificationDetails(
@@ -124,7 +132,8 @@ class NotificationService {
     );
   }
 
-  static NotificationDetails _reminderDetails(String body) => NotificationDetails(
+  static NotificationDetails _reminderDetails(String body) =>
+      NotificationDetails(
         android: AndroidNotificationDetails(
           'sakina_reminder',
           'تذكير قبل الصلاة',
@@ -135,7 +144,8 @@ class NotificationService {
         ),
       );
 
-  static NotificationDetails _generalDetails(String body) => NotificationDetails(
+  static NotificationDetails _generalDetails(String body) =>
+      NotificationDetails(
         android: AndroidNotificationDetails(
           'sakina_general',
           'تنبيهات سكينة',
@@ -146,13 +156,31 @@ class NotificationService {
         ),
       );
 
-  static Future<void> _at(int id, String title, String body,
-      tz.TZDateTime when, NotificationDetails d, AndroidScheduleMode mode,
-      {DateTimeComponents? repeat}) async {
+  // ---------- جدولة الإشعارات ----------
+  static Future<void> _at(
+      int id,
+      String title,
+      String body,
+      tz.TZDateTime when,
+      NotificationDetails d,
+      AndroidScheduleMode mode, {
+      DateTimeComponents? repeat,
+  }) async {
     try {
-      await notificationsPlugin.zonedSchedule(id, title, body, when, d,
-          androidScheduleMode: mode, matchDateTimeComponents: repeat);
-    } catch (_) {}
+      await notificationsPlugin.zonedSchedule(
+        id,
+        title,
+        body,
+        when,
+        d,
+        androidScheduleMode: mode,
+        matchDateTimeComponents: repeat,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+    } catch (e) {
+      print('Notification scheduling error: $e');
+    }
   }
 
   // ---------- الجدولة ----------
@@ -191,35 +219,65 @@ class NotificationService {
         final p = fardPrayers[i];
         final at = day.t[p]!;
         final name = prayerAr[p]!;
+
         if (s.adhanOn && s.adhanFor(p.name) && at.isAfter(now)) {
           final body = 'حان الآن موعد أذان $name حسب توقيت ${s.cityName}';
-          await _at(d * 20 + i * 3, 'حان وقت صلاة $name', body, at,
-              _adhanDetails(p, muezzin, body), mode);
+          await _at(
+            d * 20 + i * 3,
+            'حان وقت صلاة $name',
+            body,
+            at,
+            _adhanDetails(p, muezzin, body),
+            mode,
+          );
         }
+
         if (s.reminderOn && s.adhanFor(p.name)) {
           final r = at.subtract(Duration(minutes: s.reminderMinutes));
           if (r.isAfter(now)) {
             final body =
                 'بقي ${fmtDurWords(Duration(minutes: s.reminderMinutes))} على صلاة $name';
-            await _at(d * 20 + i * 3 + 1, 'اقترب وقت $name', body, r,
-                _reminderDetails(body), mode);
+            await _at(
+              d * 20 + i * 3 + 1,
+              'اقترب وقت $name',
+              body,
+              r,
+              _reminderDetails(body),
+              mode,
+            );
           }
         }
       }
 
       // السحور والإفطار في رمضان
       if (s.ramadanAlerts && hijriOf(date).hMonth == 9) {
-        final suhoor = day.t[Prayer.fajr]!.subtract(const Duration(minutes: 30));
+        final suhoor =
+            day.t[Prayer.fajr]!.subtract(const Duration(minutes: 30));
         if (suhoor.isAfter(now)) {
-          const body = 'بقي نصف ساعة على أذان الفجر، تسحّروا فإن في السحور بركة.';
-          await _at(1000 + d * 2, 'وقت السحور', body, suhoor,
-              _generalDetails(body), mode);
+          const body =
+              'بقي نصف ساعة على أذان الفجر، تسحّروا فإن في السحور بركة.';
+          await _at(
+            1000 + d * 2,
+            'وقت السحور',
+            body,
+            suhoor,
+            _generalDetails(body),
+            mode,
+          );
         }
-        final iftar = day.t[Prayer.maghrib]!.subtract(const Duration(minutes: 10));
+
+        final iftar =
+            day.t[Prayer.maghrib]!.subtract(const Duration(minutes: 10));
         if (iftar.isAfter(now)) {
           const body = 'بقي عشر دقائق على الإفطار، فاغتنم وقت الدعاء.';
-          await _at(1001 + d * 2, 'اقترب الإفطار', body, iftar,
-              _generalDetails(body), mode);
+          await _at(
+            1001 + d * 2,
+            'اقترب الإفطار',
+            body,
+            iftar,
+            _generalDetails(body),
+            mode,
+          );
         }
       }
     }
@@ -231,19 +289,36 @@ class NotificationService {
         final e = evs[i];
         final when = cairoDate(e.date.year, e.date.month, e.date.day, 8, 0);
         if (when.isAfter(now)) {
-          await _at(2000 + i, e.event.title, e.event.note, when,
-              _generalDetails(e.event.note), mode);
+          await _at(
+            2000 + i,
+            e.event.title,
+            e.event.note,
+            when,
+            _generalDetails(e.event.note),
+            mode,
+          );
         }
       }
     }
 
     // تذكير الورد اليومي
     if (s.khatmaReminder) {
-      var when = cairoDate(now.year, now.month, now.day, s.khatmaHour, s.khatmaMinute);
-      if (!when.isAfter(now)) when = when.add(const Duration(days: 1));
-      const body = 'حان وقت وردك من القرآن الكريم، قليل دائم خير من كثير منقطع.';
-      await _at(3000, 'وردك اليومي', body, when, _generalDetails(body), mode,
-          repeat: DateTimeComponents.time);
+      var when =
+          cairoDate(now.year, now.month, now.day, s.khatmaHour, s.khatmaMinute);
+      if (!when.isAfter(now)) {
+        when = when.add(const Duration(days: 1));
+      }
+      const body =
+          'حان وقت وردك من القرآن الكريم، قليل دائم خير من كثير منقطع.';
+      await _at(
+        3000,
+        'وردك اليومي',
+        body,
+        when,
+        _generalDetails(body),
+        mode,
+        repeat: DateTimeComponents.time,
+      );
     }
   }
 
@@ -252,6 +327,10 @@ class NotificationService {
     final m = await AdhanAudio.selected();
     const body = 'هذا اختبار لصوت الأذان في الإشعارات.';
     await notificationsPlugin.show(
-        9999, 'تجربة الأذان', body, _adhanDetails(Prayer.dhuhr, m, body));
+      9999,
+      'تجربة الأذان',
+      body,
+      _adhanDetails(Prayer.dhuhr, m, body),
+    );
   }
 }
